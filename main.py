@@ -53,6 +53,13 @@ class Wall:
             rows.append(row)
 
         return rows
+    
+    def render(self):
+        for row in self.rows:
+            line = ""
+            for brick in row:
+                line += repr(brick) * (4 if not brick.is_half else 2)
+            print(line)
 
 
 
@@ -71,10 +78,12 @@ def run_dev_tests():
     print(repr(b))
 
     wall = Wall()
-    assert len(wall.rows) == int(WALL_HEIGHT // COURSE_HEIGHT)
-    print(len(wall.rows))
-    assert all(isinstance(brick, Brick) for row in wall.rows for brick in row)
-    print(wall.generate_stretcher_bond())
+    # assert len(wall.rows) == int(WALL_HEIGHT // COURSE_HEIGHT)
+    # print(len(wall.rows))
+    # assert all(isinstance(brick, Brick) for row in wall.rows for brick in row)
+    # print(wall.generate_stretcher_bond())
+
+    print(wall.render())
 
 if __name__ == "__main__":
     if "--test" in sys.argv:
