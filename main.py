@@ -1,4 +1,5 @@
 import sys
+from typing import List
 
 # Constants
 BRICK_FULL = 210
@@ -23,6 +24,37 @@ class Brick:
 
     def __repr__(self):
         return BUILT if self.built else UNBUILT   
+    
+
+class Wall:
+    def __init__(self):
+        self.rows: List[List[Brick]] = self.generate_stretcher_bond()
+
+    def generate_stretcher_bond(self) -> List[List[Brick]]:
+        rows= []
+        num_courses = int(WALL_HEIGHT // COURSE_HEIGHT) 
+
+        for row_index in range(num_courses):
+            row = []
+            offset = (BRICK_FULL+HEAD_JOINT)//2 if row_index % 2 else 0
+            length = 0
+
+            if offset: 
+                row.append(Brick(is_half=True))
+                length += BRICK_HALF + HEAD_JOINT
+
+            while length + BRICK_FULL <= WALL_WIDTH:
+                row.append(Brick())
+                length += BRICK_FULL + HEAD_JOINT
+
+            if length < WALL_WIDTH:
+                row.append(Brick(is_half=True))
+
+            rows.append(row)
+
+        return rows
+
+
 
 def run_dev_tests():
     print("Running Tests...")
@@ -37,6 +69,12 @@ def run_dev_tests():
     b.built = True
     assert repr(b) == BUILT
     print(repr(b))
+
+    wall = Wall()
+    assert len(wall.rows) == int(WALL_HEIGHT // COURSE_HEIGHT)
+    print(len(wall.rows))
+    assert all(isinstance(brick, Brick) for row in wall.rows for brick in row)
+    print(wall.generate_stretcher_bond())
 
 if __name__ == "__main__":
     if "--test" in sys.argv:
