@@ -1,5 +1,6 @@
 import sys
 from typing import List
+import time
 
 # Constants
 BRICK_FULL = 210
@@ -61,7 +62,14 @@ class Wall:
                 line += repr(brick) * (4 if not brick.is_half else 2)
             print(line)
 
-
+    def build_next(self):
+        for i in reversed(range(len(self.rows))):
+            row = self.rows[i]
+            for j, brick in enumerate(row):
+                if not brick.built:
+                    brick.built = True
+                    return True
+        return False
 
 def run_dev_tests():
     print("Running Tests...")
@@ -83,7 +91,15 @@ def run_dev_tests():
     # assert all(isinstance(brick, Brick) for row in wall.rows for brick in row)
     # print(wall.generate_stretcher_bond())
 
-    print(wall.render())
+    # print(wall.render())
+
+    wall.render()
+    print("\nSimulating automatic build without ENTER...\n")
+    while wall.build_next():
+        time.sleep(0.1)
+        wall.render()
+    print("✅ Wall fully built!")
+    sys.exit(0)
 
 if __name__ == "__main__":
     if "--test" in sys.argv:
