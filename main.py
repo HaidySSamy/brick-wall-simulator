@@ -1,6 +1,7 @@
 import sys
-from typing import List
+from typing import List, Tuple
 import time
+import os
 
 # Constants
 BRICK_FULL = 210
@@ -34,6 +35,9 @@ class Wall:
     def __init__(self):
         self.rows: List[List[Brick]] = self.generate_stretcher_bond()
         self.assign_strides()
+        self.brick_order: List[Tuple[int, int]] = self.optimized_order()
+        self.build_index = 0
+        self.rows.reverse()
 
     def generate_stretcher_bond(self) -> List[List[Brick]]:
         rows= []
@@ -87,90 +91,57 @@ class Wall:
 
     
     def render(self):
+        os.system('cls' if os.name == 'nt' else 'clear')
+        print("\nWall Build State (Stride ID shown as subscript):\n")
         for row in self.rows:
             line = ""
             for brick in row:
-                line += repr(brick) * (4 if not brick.is_half else 2)
+                char = repr(brick)
+                stride_label = str(brick.stride % 10)
+                line += char * (4 if not brick.is_half else 2) + stride_label
+                # line += repr(brick) * (4 if not brick.is_half else 2)
             print(line)
 
     def build_next(self):
-        for i in reversed(range(len(self.rows))):
-            row = self.rows[i]
-            for j, brick in enumerate(row):
-                if not brick.built:
-                    brick.built = True
-                    return True
+        if self.build_index < len(self.brick_order):
+
+            for i in reversed(range(len(self.rows))):
+                row = self.rows[i]
+                for j, brick in enumerate(row):
+                    if not brick.built:
+                        brick.built = True
+                        return True
         return False
-
-def run_dev_tests():
-    print("Running Tests...")
-
-    # Test Brick class
-    b = Brick()
-    assert b.length == BRICK_FULL
-    print(b.is_half)
-    assert not b.is_half
-    assert repr(b) == UNBUILT
-    print(repr(b))
-    b.built = True
-    assert repr(b) == BUILT
-    print(repr(b))
-
-    wall = Wall()
-    # assert len(wall.rows) == int(WALL_HEIGHT // COURSE_HEIGHT)
-    # print(len(wall.rows))
-    # assert all(isinstance(brick, Brick) for row in wall.rows for brick in row)
-    # print(wall.generate_stretcher_bond())
-
-    # print(wall.render())
     
-    # Test course width validity
-    for row in wall.rows:
-        row_width = sum(brick.length + HEAD_JOINT for brick in row) - HEAD_JOINT
-        assert row_width <= WALL_WIDTH + BRICK_HALF
+    def optimized_order(self) -> List[Tuple[int, int]]:
+        stride_map = {}
+        for i, row in enumerate(self.rows):
+            for j, brick in enumerate(row):
+                if brick.stride not in stride_map:
+                    stride_map[brick.stride] = []
+                stride_map[brick.stride].append((i, j))
 
-    # Stride assignment
-    assert all(brick.stride >= 0 for row in wall.rows for brick in row)
-
-
-    wall.render()
-    print("\nSimulating automatic build without ENTER...\n")
-    while wall.build_next():
-        time.sleep(0.1)
-        wall.render()
-    print("✅ Wall fully built!")
-    sys.exit(0)
-
-
-def debug_stride_layout(wall):
-    print("\n🧱 Stride Debug Layout:")
-    for i, row in enumerate(reversed(wall.rows)):
-        print(f"Row {len(wall.rows) - 1 - i:02d}: ", end="")
-        for brick in row:
-            stride_id = getattr(brick, "stride", None)
-            brick_type = "H" if brick.is_half else "F"
-            print(f"[{brick_type}:{stride_id}]", end=" ")
-        print()
+        ordered = []
+        for stride_id in sorted(stride_map):
+            bricks = stride_map[stride_id]
+            bricks.sort(key=lambda pos: (-pos[0], pos[1]))
+            ordered.extend(bricks)
+        return ordered
 
 
 if __name__ == "__main__":
-    # wall = Wall()
-    # wall.render()
-    # print("\nPress ENTER to build each brick (Ctrl+C to exit).\n")
-    # while True:
-    #     try:
-    #         input()
-    #         if not wall.build_next():
-    #             print("Wall complete!")
-    #             break
-    #         wall.render()
-    #     except KeyboardInterrupt:
-    #         break
 
-    if "--test" in sys.argv:
-        # run_dev_tests()
-        # sys.exit(0)
+    wall = Wall()
+    wall.render()
+    print("\nPress ENTER to build each brick (Ctrl+C to exit).\n")
+    while True:
+        try:
+            input()
+            if not wall.build_next():
+                print("Wall complete!")
+                break
+            wall.render()
+        except KeyboardInterrupt:
+            break
 
-        wall = Wall()
-        debug_stride_layout(wall)
-        sys.exit(0)
+  
