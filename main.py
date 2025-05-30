@@ -102,6 +102,19 @@ def run_dev_tests():
     sys.exit(0)
 
 if __name__ == "__main__":
+    wall = Wall()
+    wall.render()
+    print("\nPress ENTER to build each brick (Ctrl+C to exit).\n")
+    while True:
+        try:
+            input()
+            if not wall.build_next():
+                print("Wall complete!")
+                break
+            wall.render()
+        except KeyboardInterrupt:
+            break
+
     if "--test" in sys.argv:
         run_dev_tests()
         sys.exit(0)
