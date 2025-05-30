@@ -1,9 +1,9 @@
-import sys
 from typing import List, Tuple
-import time
 import os
 
-# Constants
+# =========================
+# ======= Constants =======
+# =========================
 BRICK_FULL = 210
 BRICK_HALF = 100
 HEAD_JOINT = 10
@@ -20,19 +20,37 @@ BUILD_HEIGHT = 1300    # Robot stride height
 UNBUILT = '░'
 BUILT = '▓'
 
+# =========================
+# ===== Brick Class =======
+# =========================
+
 class Brick:
     def __init__(self, is_half: bool = False):
+        """
+        Initialize a Brick.
+        :param is_half: Boolean flag indicating if the brick is a half brick.
+        """
         self.length = BRICK_HALF if is_half else BRICK_FULL
         self.is_half = is_half
         self.stride = -1
         self.built = False               
 
     def __repr__(self):
+        """
+        Return visual character based on build state.
+        :return: ▓ if built, ░ if not built.
+        """
         return BUILT if self.built else UNBUILT   
     
+# =========================
+# ====== Wall Class =======
+# =========================
 
 class Wall:
     def __init__(self):
+        """
+        Initialize the wall with stretcher bond, stride assignments, and build plan.
+        """
         self.rows: List[List[Brick]] = self.generate_stretcher_bond()
         self.assign_strides()
         self.brick_order: List[Tuple[int, int]] = self.optimized_order()
@@ -40,6 +58,10 @@ class Wall:
         # self.rows.reverse()
 
     def generate_stretcher_bond(self) -> List[List[Brick]]:
+        """
+        Generate rows of bricks in stretcher bond pattern.
+        :return: A list of brick rows.
+        """
         rows= []
         num_courses = int(WALL_HEIGHT // COURSE_HEIGHT) 
 
@@ -64,7 +86,9 @@ class Wall:
         return rows
     
     def assign_strides(self):
-        # Partition the wall area into stride-sized blocks
+        """
+        Assign each brick a stride ID based on its position in the wall.
+        """
         stride_w = BUILD_WIDTH
         stride_h = BUILD_HEIGHT
 
@@ -89,29 +113,11 @@ class Wall:
 
                 stride_id += 1
 
-    
-    def render(self):
-        os.system('cls' if os.name == 'nt' else 'clear')
-        print("\nWall Build State (Stride ID shown as subscript):\n")
-        for row in reversed(self.rows):
-            line = ""
-            for brick in row:
-                char = repr(brick)
-                stride_label = str(brick.stride % 10)
-                line += char * (4 if not brick.is_half else 2) + stride_label
-                # line += repr(brick) * (4 if not brick.is_half else 2)
-            print(line)
-
-    def build_next(self):
-        if self.build_index < len(self.brick_order):
-            i, j = self.brick_order[self.build_index]
-            self.rows[i][j].built = True
-            self.build_index += 1
-            return True
-        return False
-
-    
     def optimized_order(self) -> List[Tuple[int, int]]:
+        """
+        Return build order optimized to group bricks by stride.
+        :return: A list of (row, col) indices in build order.
+        """
         stride_map = {}
         for i, row in enumerate(self.rows):
             for j, brick in enumerate(row):
@@ -125,7 +131,36 @@ class Wall:
             bricks.sort(key=lambda pos: (pos[0], pos[1]))
             ordered.extend(bricks)
         return ordered
+    
+    def render(self):
+        """
+        Print the current state of the wall to the console.
+        """
+        os.system('cls' if os.name == 'nt' else 'clear')
+        print("\nWall Build State (Stride ID shown as subscript):\n")
+        for row in reversed(self.rows):
+            line = ""
+            for brick in row:
+                char = repr(brick)
+                stride_label = str(brick.stride % 10)
+                line += char * (4 if not brick.is_half else 2) + stride_label
+            print(line)
 
+    def build_next(self):
+        """
+        Mark the next brick in the build order as built.
+        :return: True if a brick was built, False if all are built.
+        """
+        if self.build_index < len(self.brick_order):
+            i, j = self.brick_order[self.build_index]
+            self.rows[i][j].built = True
+            self.build_index += 1
+            return True
+        return False
+
+# ==================================
+# ======== Run the Simulator =======
+# ==================================
 
 if __name__ == "__main__":
 
