@@ -37,7 +37,7 @@ class Wall:
         self.assign_strides()
         self.brick_order: List[Tuple[int, int]] = self.optimized_order()
         self.build_index = 0
-        self.rows.reverse()
+        # self.rows.reverse()
 
     def generate_stretcher_bond(self) -> List[List[Brick]]:
         rows= []
@@ -93,7 +93,7 @@ class Wall:
     def render(self):
         os.system('cls' if os.name == 'nt' else 'clear')
         print("\nWall Build State (Stride ID shown as subscript):\n")
-        for row in self.rows:
+        for row in reversed(self.rows):
             line = ""
             for brick in row:
                 char = repr(brick)
@@ -104,14 +104,12 @@ class Wall:
 
     def build_next(self):
         if self.build_index < len(self.brick_order):
-
-            for i in reversed(range(len(self.rows))):
-                row = self.rows[i]
-                for j, brick in enumerate(row):
-                    if not brick.built:
-                        brick.built = True
-                        return True
+            i, j = self.brick_order[self.build_index]
+            self.rows[i][j].built = True
+            self.build_index += 1
+            return True
         return False
+
     
     def optimized_order(self) -> List[Tuple[int, int]]:
         stride_map = {}
@@ -124,7 +122,7 @@ class Wall:
         ordered = []
         for stride_id in sorted(stride_map):
             bricks = stride_map[stride_id]
-            bricks.sort(key=lambda pos: (-pos[0], pos[1]))
+            bricks.sort(key=lambda pos: (pos[0], pos[1]))
             ordered.extend(bricks)
         return ordered
 
