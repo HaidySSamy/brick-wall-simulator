@@ -1,4 +1,5 @@
 from typing import List, Tuple
+import random
 
 BRICK_FULL    = 210    # mm
 BRICK_HALF    = 100    # mm
@@ -12,6 +13,10 @@ WALL_HEIGHT   = 2000   # mm total wall height
 
 BUILD_WIDTH   = 800    # mm robot stride width
 BUILD_HEIGHT  = 1300   # mm robot stride height
+
+MAX_ATTEMPTS = 50
+MAX_STAGGER_CHAIN = 6
+BRICK_HEIGHT = 50
 
 class Brick:
     def __init__(
@@ -59,6 +64,7 @@ class Wall:
             for brick in row:
                 brick.bond_type = self.bond_type
 
+
     def generate_bond(self) -> List[List[Brick]]:
         if self.bond_type == "stretcher":
             return self.generate_stretcher_bond()
@@ -66,6 +72,8 @@ class Wall:
             return self.generate_flemish_bond()
         elif self.bond_type == "english":
             return self.generate_english_bond()
+        elif self.bond_type == "wild":
+            return self.generate_wild_bond()
         else:
             raise ValueError(f"Unsupported bond type: {self.bond_type}")
 
@@ -170,6 +178,69 @@ class Wall:
             rows.append(row)
 
         return rows
+    
+    def generate_wild_bond(self) -> List[List[Brick]]:
+        def build_row(y_index: int, prev_row: List[Brick], prev_pos: List[int], left: int, right: int) -> Tuple[List[Brick], List[int], set]:
+            row = []
+            joints = set()
+            positions = []
+            x = left + random.randint(0, BRICK_FULL // 2)
+            last_half = False
+
+            while x + BRICK_HALF <= right:
+                is_half = random.random() < 0.3
+                if last_half:
+                    is_half = False
+
+                brick_len = BRICK_HALF if is_half else BRICK_FULL
+                end_x = x + brick_len
+
+                if y_index > 0:
+                    supported = False
+                    for k, below in enumerate(prev_row):
+                        below_x = prev_pos[k]
+                        below_end = below_x + below.length
+                        if not (end_x <= below_x or x >= below_end):
+                            supported = True
+                            break
+                    if not supported:
+                        x += HEAD_JOINT
+                        continue
+
+                row.append(Brick(is_half=is_half))
+                positions.append(x)
+                joints.add(end_x)
+                x = end_x + HEAD_JOINT
+                last_half = is_half
+
+            return row, positions, joints
+
+        rows: List[List[Brick]] = [[] for _ in range(int(WALL_HEIGHT // COURSE_HEIGHT))]
+        positions_mm: List[List[int]] = [[] for _ in range(int(WALL_HEIGHT // COURSE_HEIGHT))]
+        prev_joints: List[set] = [set() for _ in range(int(WALL_HEIGHT // COURSE_HEIGHT))]
+
+        for top in range(0, WALL_HEIGHT, BUILD_HEIGHT):
+            for left in range(0, WALL_WIDTH, BUILD_WIDTH):
+                h_start = int(top // COURSE_HEIGHT)
+                h_end = min(int((top + BUILD_HEIGHT) // COURSE_HEIGHT), len(rows))
+
+                for y_index in range(h_start, h_end):
+                    for _ in range(MAX_ATTEMPTS):
+                        prev_row = rows[y_index - 1] if y_index > 0 else []
+                        prev_pos = positions_mm[y_index - 1] if y_index > 0 else []
+                        row, positions, joints = build_row(y_index, prev_row, prev_pos, left, left + BUILD_WIDTH)
+                        if joints & prev_joints[y_index]:
+                            continue
+
+                        rows[y_index].extend(row)
+                        positions_mm[y_index].extend(positions)
+                        prev_joints[y_index] |= joints
+                        break
+
+        self.positions_mm = positions_mm
+        return rows
+
+
 
     def assign_strides(self):
         stride_id = 0
