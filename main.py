@@ -1,5 +1,6 @@
 from typing import List, Tuple
 import random
+import math 
 
 BRICK_FULL    = 210    # mm
 BRICK_HALF    = 100    # mm
@@ -14,9 +15,14 @@ WALL_HEIGHT   = 2000   # mm total wall height
 BUILD_WIDTH   = 800    # mm robot stride width
 BUILD_HEIGHT  = 1300   # mm robot stride height
 
-MAX_ATTEMPTS = 50
+# MAX_ATTEMPTS = 50
 MAX_STAGGER_CHAIN = 6
 BRICK_HEIGHT = 50
+
+def calculate_max_chunk_rows() -> int:
+    half_width = BUILD_WIDTH / 2
+    vertical_reach = math.sqrt(BUILD_HEIGHT ** 2 - half_width ** 2)
+    return max(1, int(vertical_reach // COURSE_HEIGHT))
 
 class Brick:
     def __init__(
@@ -180,64 +186,81 @@ class Wall:
         return rows
     
     def generate_wild_bond(self) -> List[List[Brick]]:
-        def build_row(y_index: int, prev_row: List[Brick], prev_pos: List[int], left: int, right: int) -> Tuple[List[Brick], List[int], set]:
-            row = []
-            joints = set()
-            positions = []
-            x = left + random.randint(0, BRICK_FULL // 2)
-            last_half = False
+        def has_stagger_chain(curr: set, prev: set) -> bool:
+            chain = 0
+            for x in sorted(curr):
+                if any(abs(x - y) in {BRICK_FULL, BRICK_HALF} for y in prev):
+                    chain += 1
+                    if chain > 6:
+                        return True
+                else:
+                    chain = 0
+            return False
 
-            while x + BRICK_HALF <= right:
-                is_half = random.random() < 0.3
-                if last_half:
-                    is_half = False
+        def has_adjacent_halves(row) -> bool:
+            for i in range(len(row) - 1):
+                if row[i].is_half and row[i + 1].is_half:
+                    return True
+            return False
 
-                brick_len = BRICK_HALF if is_half else BRICK_FULL
-                end_x = x + brick_len
+        rows = []
+        prev_joints = set()
+        y = 0
+        row_num = 0
 
-                if y_index > 0:
-                    supported = False
-                    for k, below in enumerate(prev_row):
-                        below_x = prev_pos[k]
-                        below_end = below_x + below.length
-                        if not (end_x <= below_x or x >= below_end):
-                            supported = True
-                            break
-                    if not supported:
-                        x += HEAD_JOINT
-                        continue
+        while y + COURSE_HEIGHT <= WALL_HEIGHT:
+            print(f"--- Building row {row_num} at height y={y} ---")
+            for attempt in range(1000):
+                print(f"Attempt #{attempt + 1} to build row {row_num}")
+                x = 0
+                row = []
+                joints = set()
+                last_half = False
 
-                row.append(Brick(is_half=is_half))
-                positions.append(x)
-                joints.add(end_x)
-                x = end_x + HEAD_JOINT
-                last_half = is_half
+                retry_strategy = attempt % 3
+                if retry_strategy == 1:
+                    x += BRICK_HALF // 2
+                    print("→ Shifted start by quarter brick")
+                elif retry_strategy == 2:
+                    print("→ Flipping brick bias toward full bricks")
 
-            return row, positions, joints
+                while x + BRICK_HALF <= WALL_WIDTH:
+                    remaining = WALL_WIDTH - x
+                    if retry_strategy == 2:
+                        is_half = random.choices([True, False], weights=[1, 3])[0]
+                    else:
+                        is_half = random.choice([True, False])
 
-        rows: List[List[Brick]] = [[] for _ in range(int(WALL_HEIGHT // COURSE_HEIGHT))]
-        positions_mm: List[List[int]] = [[] for _ in range(int(WALL_HEIGHT // COURSE_HEIGHT))]
-        prev_joints: List[set] = [set() for _ in range(int(WALL_HEIGHT // COURSE_HEIGHT))]
+                    if last_half:
+                        is_half = False
 
-        for top in range(0, WALL_HEIGHT, BUILD_HEIGHT):
-            for left in range(0, WALL_WIDTH, BUILD_WIDTH):
-                h_start = int(top // COURSE_HEIGHT)
-                h_end = min(int((top + BUILD_HEIGHT) // COURSE_HEIGHT), len(rows))
-
-                for y_index in range(h_start, h_end):
-                    for _ in range(MAX_ATTEMPTS):
-                        prev_row = rows[y_index - 1] if y_index > 0 else []
-                        prev_pos = positions_mm[y_index - 1] if y_index > 0 else []
-                        row, positions, joints = build_row(y_index, prev_row, prev_pos, left, left + BUILD_WIDTH)
-                        if joints & prev_joints[y_index]:
-                            continue
-
-                        rows[y_index].extend(row)
-                        positions_mm[y_index].extend(positions)
-                        prev_joints[y_index] |= joints
+                    brick_len = BRICK_HALF if is_half else BRICK_FULL
+                    if x + brick_len > WALL_WIDTH:
                         break
 
-        self.positions_mm = positions_mm
+                    row.append(Brick(is_half=is_half))
+                    x += brick_len + HEAD_JOINT
+                    joints.add(x)
+                    last_half = is_half
+
+                if joints & prev_joints:
+                    print("❌ Overlapping vertical joints")
+                    continue
+                if has_stagger_chain(joints, prev_joints):
+                    print("❌ Exceeded stagger chain")
+                    continue
+                if has_adjacent_halves(row):
+                    print("❌ Adjacent half bricks")
+                    continue
+
+                print(f"✅ Row {row_num} accepted with {len(row)} bricks.\n")
+                rows.append(row)
+                prev_joints = joints
+                break
+
+            y += COURSE_HEIGHT
+            row_num += 1
+
         return rows
 
 
@@ -271,14 +294,78 @@ class Wall:
                             break
 
     def optimized_order(self) -> List[Tuple[int, int]]:
-        zone_map = {}
+        from collections import defaultdict
+
+        stride_map = defaultdict(list)
         for i, row in enumerate(self.rows):
             for j, brick in enumerate(row):
-                zone_map.setdefault(brick.stride, []).append((i, j))
-        order = []
-        for sid in sorted(zone_map):
-            order.extend(sorted(zone_map[sid]))
-        return order
+                stride_map[brick.stride].append((i, j))
+
+        new_order = []
+        direction = 1  # 1 = left-to-right, -1 = right-to-left
+        x_step = int(BUILD_WIDTH)
+        x_max = WALL_WIDTH
+        y_max = len(self.rows)
+
+        max_chunk_rows = 6  # max rows per chunk to build before shifting horizontally
+        x_zones = list(range(0, x_max, x_step))
+
+        # Process from bottom to top
+        chunk_ranges = list(range(0, y_max, max_chunk_rows))
+
+        for chunk_start in chunk_ranges:
+            chunk_end = min(chunk_start + max_chunk_rows, y_max)
+
+            x_dir_zones = x_zones if direction == 1 else list(reversed(x_zones))
+
+            for x_start in x_dir_zones:
+                diagonal_groups = defaultdict(list)
+
+                for i in range(chunk_start, chunk_end):
+                    for j, brick in enumerate(self.rows[i]):
+                        x = self.positions_mm[i][j]
+                        if x_start <= x < x_start + x_step:
+                            diag_key = i + (x // 100) if direction == 1 else i - (x // 100)
+                            diagonal_groups[diag_key].append((i, j))
+
+                # sort diagonals from bottom to top
+                for level in sorted(diagonal_groups):
+                    layer = diagonal_groups[level]
+                    sorted_layer = sorted(layer, key=lambda t: t[0], reverse=False)
+                    new_order.extend(sorted_layer)
+
+            direction *= -1
+
+        # Post-process: filter out bricks that float
+        final_order = []
+        built_set = set()
+
+        for i, j in new_order:
+            brick = self.rows[i][j]
+            x_left = self.positions_mm[i][j]
+            x_right = x_left + brick.length
+
+            if i == 0:
+                final_order.append((i, j))
+                built_set.add((i, j))
+                continue
+
+            supported = False
+            for k, below_brick in enumerate(self.rows[i - 1]):
+                bx = self.positions_mm[i - 1][k]
+                br = bx + below_brick.length
+                if max(bx, x_left) < min(br, x_right):
+                    if (i - 1, k) in built_set:
+                        supported = True
+                        break
+
+            if supported:
+                final_order.append((i, j))
+                built_set.add((i, j))
+
+        return final_order
+
+
 
     def build_next(self) -> bool:
         if self.build_index >= len(self.brick_order):
