@@ -1,12 +1,10 @@
 from typing import List, Tuple
 import random
-import math 
 
 BRICK_FULL    = 210    # mm
 BRICK_HALF    = 100    # mm
-BRICK_HEADER  = 100    # mm  (same as half in our ASCII scheme)
+BRICK_HEADER  = 100    # mm
 HEAD_JOINT    = 10     # mm between bricks in the same row
-BED_JOINT     = 12.5   # mm between courses (not directly used for ASCII)
 COURSE_HEIGHT = 62.5   # mm (brick height + bed joint)
 
 WALL_WIDTH    = 2300   # mm total wall width
@@ -15,14 +13,9 @@ WALL_HEIGHT   = 2000   # mm total wall height
 BUILD_WIDTH   = 800    # mm robot stride width
 BUILD_HEIGHT  = 1300   # mm robot stride height
 
-# MAX_ATTEMPTS = 50
 MAX_STAGGER_CHAIN = 6
 BRICK_HEIGHT = 50
 
-def calculate_max_chunk_rows() -> int:
-    half_width = BUILD_WIDTH / 2
-    vertical_reach = math.sqrt(BUILD_HEIGHT ** 2 - half_width ** 2)
-    return max(1, int(vertical_reach // COURSE_HEIGHT))
 
 class Brick:
     def __init__(
@@ -45,8 +38,11 @@ class Brick:
         self.is_header = is_header
         self.back_to_back = back_to_back
         self.is_quarter = is_quarter
-        self.stride = -1
-        self.built = False
+        self.stride = -1       # set later in assign_strides()
+        self.built = False     # toggled during build order
+        self.bond_type = ""
+        self.parents: List['Brick'] = []
+
 
 class Wall:
     def __init__(self, bond_type="stretcher"):
@@ -54,6 +50,7 @@ class Wall:
         self.rows: List[List[Brick]] = self.generate_bond()
         self.positions_mm: List[List[int]] = []
 
+        # record x‐positions of each brick
         for row in self.rows:
             x = 0
             row_positions = []
@@ -62,8 +59,13 @@ class Wall:
                 x += brick.length + HEAD_JOINT
             self.positions_mm.append(row_positions)
 
-        self.assign_strides()
-        self.brick_order: List[Tuple[int, int]] = self.optimized_order()
+        self.assign_strides()                     # color zones
+        self.brick_order: List[Tuple[int, int]] = []
+        self._compute_min_movement_build_order()  # marks .built=True temporarily
+        # reset built flags
+        for r in self.rows:
+            for brick in r:
+                brick.built = False
         self.build_index = 0
 
         for row in self.rows:
@@ -83,66 +85,59 @@ class Wall:
         else:
             raise ValueError(f"Unsupported bond type: {self.bond_type}")
 
-    
     def generate_stretcher_bond(self) -> List[List[Brick]]:
         rows: List[List[Brick]] = []
         num_courses = int(WALL_HEIGHT // COURSE_HEIGHT)
 
         for row_index in range(num_courses):
             row: List[Brick] = []
-            length = 0
+            length_acc = 0
+            # half‐brick offset on odd rows
+            if row_index % 2 == 1 and BRICK_HALF + HEAD_JOINT <= WALL_WIDTH:
+                row.append(Brick(is_half=True))
+                length_acc += BRICK_HALF + HEAD_JOINT
 
-            if row_index % 2 == 1:
-                if BRICK_HALF + HEAD_JOINT <= WALL_WIDTH:
-                    row.append(Brick(is_half=True))
-                    length += BRICK_HALF + HEAD_JOINT
-
-            while length + BRICK_FULL + HEAD_JOINT <= WALL_WIDTH:
+            while length_acc + BRICK_FULL + HEAD_JOINT <= WALL_WIDTH:
                 row.append(Brick())
-                length += BRICK_FULL + HEAD_JOINT
+                length_acc += BRICK_FULL + HEAD_JOINT
 
-            # ✅ Only add final half-brick if it + joint fits
-            if length + BRICK_HALF + HEAD_JOINT <= WALL_WIDTH:
+            if length_acc + BRICK_HALF + HEAD_JOINT <= WALL_WIDTH:
                 row.append(Brick(is_half=True))
 
             rows.append(row)
 
         return rows
 
-    
     def generate_flemish_bond(self) -> List[List[Brick]]:
         rows: List[List[Brick]] = []
         num_courses = int(WALL_HEIGHT // COURSE_HEIGHT)
 
         for row_index in range(num_courses):
             row: List[Brick] = []
-            length = 0
-            toggle = True  # start with full brick
-            is_odd = row_index % 2 == 1
+            length_acc = 0
+            toggle = True
+            is_odd = (row_index % 2 == 1)
 
-            if is_odd:
-                # Apply quarter-brick offset visually (half brick in logic)
-                if BRICK_HALF + HEAD_JOINT <= WALL_WIDTH:
-                    row.append(Brick(is_half=True))
-                    length += BRICK_HALF + HEAD_JOINT
+            if is_odd and BRICK_HALF + HEAD_JOINT <= WALL_WIDTH:
+                row.append(Brick(is_half=True))
+                length_acc += BRICK_HALF + HEAD_JOINT
 
             while True:
                 if toggle:
-                    if length + BRICK_FULL + HEAD_JOINT > WALL_WIDTH:
+                    if length_acc + BRICK_FULL + HEAD_JOINT > WALL_WIDTH:
                         break
                     row.append(Brick())
-                    length += BRICK_FULL + HEAD_JOINT
+                    length_acc += BRICK_FULL + HEAD_JOINT
                 else:
-                    if length + BRICK_HALF + HEAD_JOINT > WALL_WIDTH:
+                    if length_acc + BRICK_HALF + HEAD_JOINT > WALL_WIDTH:
                         break
                     row.append(Brick(is_half=True))
-                    length += BRICK_HALF + HEAD_JOINT
+                    length_acc += BRICK_HALF + HEAD_JOINT
                 toggle = not toggle
 
             rows.append(row)
 
         return rows
-
 
     def generate_english_bond(self) -> List[List[Brick]]:
         rows: List[List[Brick]] = []
@@ -150,135 +145,173 @@ class Wall:
 
         for row_index in range(num_courses):
             row: List[Brick] = []
-            length = 0
-            is_header_row = row_index % 2 == 1
+            length_acc = 0
+            is_header_row = (row_index % 2 == 1)
 
             if is_header_row:
-                # Try queen closer
+                # queen closer (¼‐brick) + joint
                 qlen = BRICK_FULL // 4 + HEAD_JOINT
-                if length + qlen <= WALL_WIDTH:
+                if length_acc + qlen <= WALL_WIDTH:
                     row.append(Brick(is_header=True, is_quarter=True))
-                    length += qlen
-
-                # Try half header
+                    length_acc += qlen
+                # half header + joint
                 hhalf_len = BRICK_HEADER // 2 + HEAD_JOINT
-                if length + hhalf_len <= WALL_WIDTH:
+                if length_acc + hhalf_len <= WALL_WIDTH:
                     row.append(Brick(is_header=True, is_half=True))
-                    length += hhalf_len
-
-                # Add full headers
-                while length + BRICK_HEADER + HEAD_JOINT <= WALL_WIDTH:
+                    length_acc += hhalf_len
+                # rest are headers
+                while length_acc + BRICK_HEADER + HEAD_JOINT <= WALL_WIDTH:
                     row.append(Brick(is_header=True))
-                    length += BRICK_HEADER + HEAD_JOINT
-
+                    length_acc += BRICK_HEADER + HEAD_JOINT
             else:
-                # Full stretchers
-                while length + BRICK_FULL + HEAD_JOINT <= WALL_WIDTH:
+                # full stretchers
+                while length_acc + BRICK_FULL + HEAD_JOINT <= WALL_WIDTH:
                     row.append(Brick())
-                    length += BRICK_FULL + HEAD_JOINT
-
-                # Final half stretcher if fits
-                if length + BRICK_HALF + HEAD_JOINT <= WALL_WIDTH:
+                    length_acc += BRICK_FULL + HEAD_JOINT
+                if length_acc + BRICK_HALF + HEAD_JOINT <= WALL_WIDTH:
                     row.append(Brick(is_half=True))
 
             rows.append(row)
 
         return rows
-    
+
     def generate_wild_bond(self) -> List[List[Brick]]:
-        def has_stagger_chain(curr: set, prev: set) -> bool:
+        def has_stagger_chain(curr_joints: set, prev_joints: set) -> bool:
             chain = 0
-            for x in sorted(curr):
-                if any(abs(x - y) in {BRICK_FULL, BRICK_HALF} for y in prev):
+            for pos in sorted(curr_joints):
+                if any(abs(pos - p) in {BRICK_FULL, BRICK_HALF} for p in prev_joints):
                     chain += 1
-                    if chain > 6:
+                    if chain > MAX_STAGGER_CHAIN:
                         return True
                 else:
                     chain = 0
             return False
 
-        def has_adjacent_halves(row) -> bool:
-            for i in range(len(row) - 1):
-                if row[i].is_half and row[i + 1].is_half:
+        def has_adjacent_halves(row_list: List[Brick]) -> bool:
+            for idx in range(len(row_list) - 1):
+                if row_list[idx].is_half and row_list[idx + 1].is_half:
                     return True
             return False
 
-        rows = []
-        prev_joints = set()
-        y = 0
-        row_num = 0
+        rows: List[List[Brick]] = []
+        prev_joints: set = set()
+        num_courses = int(WALL_HEIGHT // COURSE_HEIGHT)
 
-        while y + COURSE_HEIGHT <= WALL_HEIGHT:
-            print(f"--- Building row {row_num} at height y={y} ---")
-            for attempt in range(1000):
-                print(f"Attempt #{attempt + 1} to build row {row_num}")
-                x = 0
-                row = []
-                joints = set()
+        target_width = WALL_WIDTH + BRICK_FULL + HEAD_JOINT  # 2520
+        to_remove = BRICK_FULL + HEAD_JOINT                  # 220
+
+        for row_num in range(num_courses):
+            attempts = 0
+            while True:
+                attempts += 1
+                x_offset = (BRICK_FULL // 4) * (row_num % 4)
+                x = x_offset
+                row_bricks: List[Brick] = []
+                curr_joints: set = set()
                 last_half = False
 
-                retry_strategy = attempt % 3
-                if retry_strategy == 1:
-                    x += BRICK_HALF // 2
-                    print("→ Shifted start by quarter brick")
-                elif retry_strategy == 2:
-                    print("→ Flipping brick bias toward full bricks")
+                # prepend quarter‐bricks
+                num_quarters = x_offset // (BRICK_FULL // 4)
+                for _ in range(num_quarters):
+                    row_bricks.append(Brick(is_quarter=True))
 
-                while x + BRICK_HALF <= WALL_WIDTH:
-                    remaining = WALL_WIDTH - x
-                    if retry_strategy == 2:
-                        is_half = random.choices([True, False], weights=[1, 3])[0]
-                    else:
-                        is_half = random.choice([True, False])
-
+                # place random half/full bricks
+                while x + BRICK_HALF <= target_width:
+                    is_half = random.choice([True, False])
                     if last_half:
                         is_half = False
-
                     brick_len = BRICK_HALF if is_half else BRICK_FULL
-                    if x + brick_len > WALL_WIDTH:
+                    if x + brick_len > target_width:
                         break
-
-                    row.append(Brick(is_half=is_half))
+                    row_bricks.append(Brick(is_half=is_half))
                     x += brick_len + HEAD_JOINT
-                    joints.add(x)
+                    curr_joints.add(x)
                     last_half = is_half
 
-                if joints & prev_joints:
-                    print("❌ Overlapping vertical joints")
-                    continue
-                if has_stagger_chain(joints, prev_joints):
-                    print("❌ Exceeded stagger chain")
-                    continue
-                if has_adjacent_halves(row):
-                    print("❌ Adjacent half bricks")
+                # check constraints
+                if (
+                    has_adjacent_halves(row_bricks)
+                    or has_stagger_chain(curr_joints, prev_joints)
+                    or (curr_joints & prev_joints)
+                ):
+                    if attempts >= 1000:
+                        raise RuntimeError(f"Cannot generate wild row {row_num} after 1000 tries")
                     continue
 
-                print(f"✅ Row {row_num} accepted with {len(row)} bricks.\n")
-                rows.append(row)
-                prev_joints = joints
+                # place one final brick if enough gap
+                used_width = x - HEAD_JOINT
+                gap = target_width - used_width
+                if gap >= BRICK_FULL:
+                    row_bricks.append(Brick(is_half=False))
+                    x += BRICK_FULL + HEAD_JOINT
+                    curr_joints.add(x)
+                elif gap >= BRICK_HALF:
+                    row_bricks.append(Brick(is_half=True))
+                    x += BRICK_HALF + HEAD_JOINT
+                    curr_joints.add(x)
+                # else leave blank
+
+                prev_joints = curr_joints
                 break
 
-            y += COURSE_HEIGHT
-            row_num += 1
+            # crop 220 mm from left
+            remaining_to_remove = to_remove
+            new_row: List[Brick] = []
+            i_br = 0
+            while i_br < len(row_bricks) and remaining_to_remove > 0:
+                brick = row_bricks[i_br]
+                span = brick.length + HEAD_JOINT
+                if remaining_to_remove >= span:
+                    remaining_to_remove -= span
+                    i_br += 1
+                    continue
+                else:
+                    if remaining_to_remove < brick.length:
+                        brick.length -= remaining_to_remove
+                        remaining_to_remove = 0
+                        new_row.append(brick)
+                        i_br += 1
+                        break
+                    else:
+                        remaining_to_remove -= brick.length
+                        if remaining_to_remove >= HEAD_JOINT:
+                            remaining_to_remove -= HEAD_JOINT
+                            i_br += 1
+                            continue
+                        else:
+                            remaining_to_remove = 0
+                            i_br += 1
+                            break
+
+            for j in range(i_br, len(row_bricks)):
+                new_row.append(row_bricks[j])
+
+            rows.append(new_row)
 
         return rows
 
-
-
     def assign_strides(self):
+        """
+        Assign each brick to a 'stride' (color zone) if it overlaps that zone.
+        """
         stride_id = 0
         for top in range(0, WALL_HEIGHT, BUILD_HEIGHT):
             for left in range(0, WALL_WIDTH, BUILD_WIDTH):
                 h_start = int(top // COURSE_HEIGHT)
-                h_end = min(int((top + BUILD_HEIGHT) // COURSE_HEIGHT), len(self.rows))
+                h_end   = min(int((top + BUILD_HEIGHT) // COURSE_HEIGHT), len(self.rows))
                 for i in range(h_start, h_end):
                     row_x = 0
                     for j, brick in enumerate(self.rows[i]):
-                        if left <= row_x < left + BUILD_WIDTH or left < row_x + brick.length <= left + BUILD_WIDTH:
+                        brick_left  = row_x
+                        brick_right = row_x + brick.length
+                        zone_left   = left
+                        zone_right  = left + BUILD_WIDTH
+                        if (brick_left < zone_right) and (brick_right > zone_left):
                             brick.stride = stride_id
                         row_x += brick.length + HEAD_JOINT
                 stride_id += 1
 
+        # English adjustment: headers get same stride as brick beneath
         if self.bond_type == "english":
             for i in range(1, len(self.rows), 2):
                 for j, header in enumerate(self.rows[i]):
@@ -293,78 +326,113 @@ class Wall:
                             header.stride = below.stride
                             break
 
-    def optimized_order(self) -> List[Tuple[int, int]]:
-        from collections import defaultdict
-
-        stride_map = defaultdict(list)
-        for i, row in enumerate(self.rows):
-            for j, brick in enumerate(row):
-                stride_map[brick.stride].append((i, j))
-
-        new_order = []
-        direction = 1  # 1 = left-to-right, -1 = right-to-left
-        x_step = int(BUILD_WIDTH)
-        x_max = WALL_WIDTH
-        y_max = len(self.rows)
-
-        max_chunk_rows = 6  # max rows per chunk to build before shifting horizontally
-        x_zones = list(range(0, x_max, x_step))
-
-        # Process from bottom to top
-        chunk_ranges = list(range(0, y_max, max_chunk_rows))
-
-        for chunk_start in chunk_ranges:
-            chunk_end = min(chunk_start + max_chunk_rows, y_max)
-
-            x_dir_zones = x_zones if direction == 1 else list(reversed(x_zones))
-
-            for x_start in x_dir_zones:
-                diagonal_groups = defaultdict(list)
-
-                for i in range(chunk_start, chunk_end):
-                    for j, brick in enumerate(self.rows[i]):
-                        x = self.positions_mm[i][j]
-                        if x_start <= x < x_start + x_step:
-                            diag_key = i + (x // 100) if direction == 1 else i - (x // 100)
-                            diagonal_groups[diag_key].append((i, j))
-
-                # sort diagonals from bottom to top
-                for level in sorted(diagonal_groups):
-                    layer = diagonal_groups[level]
-                    sorted_layer = sorted(layer, key=lambda t: t[0], reverse=False)
-                    new_order.extend(sorted_layer)
-
-            direction *= -1
-
-        # Post-process: filter out bricks that float
-        final_order = []
+    def _compute_min_movement_build_order(self):
+        """
+        Build children only after parents, minimizing movement between strides.
+        """
+        self._link_parents_for_all_bricks()
+        all_bricks = [(i, j, brick) for i, row in enumerate(self.rows) for j, brick in enumerate(row)]
+        total = len(all_bricks)
         built_set = set()
+        build_sequence = []
+        stride_id = 0
 
-        for i, j in new_order:
-            brick = self.rows[i][j]
-            x_left = self.positions_mm[i][j]
-            x_right = x_left + brick.length
+        X_ANCHORS = [0, 300, 700, 1200, 1500]
+        Y_ANCHORS = [0, 700]
+        anchor_x = 0
+        anchor_y = 0
 
-            if i == 0:
-                final_order.append((i, j))
-                built_set.add((i, j))
-                continue
+        while len(built_set) < total:
+            buildable = [(i, j, b) for (i, j, b) in all_bricks if (not b.built) and all(p.built for p in b.parents)]
+            if not buildable:
+                raise RuntimeError("No buildable bricks remain but wall is incomplete.")
 
-            supported = False
-            for k, below_brick in enumerate(self.rows[i - 1]):
-                bx = self.positions_mm[i - 1][k]
-                br = bx + below_brick.length
-                if max(bx, x_left) < min(br, x_right):
-                    if (i - 1, k) in built_set:
-                        supported = True
+            best_cost = None
+            best_diag = None
+            best_anchor = (0, 0)
+            best_item = None
+
+            for (i, j, brick) in buildable:
+                # compute offset for Flemish, none for Wild after cropping
+                if self.bond_type == "flemish" and (i % 2 == 1):
+                    x_offset_i = BRICK_FULL // 4
+                else:
+                    x_offset_i = 0
+                x_mm = self.positions_mm[i][j] + x_offset_i
+                y_mm = i * COURSE_HEIGHT
+                length_mm = brick.length
+                height_mm = BRICK_HEIGHT
+
+                cand_cost = None
+                cand_anchor = (0, 0)
+                for nax in X_ANCHORS:
+                    if not (x_mm >= nax and (x_mm + length_mm) <= nax + BUILD_WIDTH):
+                        continue
+                    for nay in Y_ANCHORS:
+                        if not (y_mm >= nay and (y_mm + height_mm) <= nay + BUILD_HEIGHT):
+                            continue
+                        dx = abs(nax - anchor_x)
+                        dy = abs(nay - anchor_y)
+                        cost = dx + dy
+                        if cand_cost is None or cost < cand_cost:
+                            cand_cost = cost
+                            cand_anchor = (nax, nay)
+                        if cost == 0:
+                            break
+                    if cand_cost == 0:
                         break
 
-            if supported:
-                final_order.append((i, j))
-                built_set.add((i, j))
+                if cand_cost is None:
+                    nax = min(max(0, x_mm), WALL_WIDTH - BUILD_WIDTH)
+                    nay = min(max(0, y_mm), WALL_HEIGHT - BUILD_HEIGHT)
+                    dx = abs(nax - anchor_x)
+                    dy = abs(nay - anchor_y)
+                    cand_cost = dx + dy
+                    cand_anchor = (nax, nay)
 
-        return final_order
+                diag_key = i + (x_mm / BRICK_FULL)
+                if (best_cost is None) or (cand_cost < best_cost) or (cand_cost == best_cost and diag_key < best_diag):
+                    best_cost = cand_cost
+                    best_diag = diag_key
+                    best_anchor = cand_anchor
+                    best_item = (i, j, brick)
 
+            bi, bj, chosen = best_item
+            if best_cost > 0:
+                stride_id += 1
+                anchor_x, anchor_y = best_anchor
+
+            chosen.built = True
+            chosen.stride = stride_id
+            built_set.add(chosen)
+            build_sequence.append((bi, bj))
+
+        self.brick_order = build_sequence
+
+    def _link_parents_for_all_bricks(self):
+        """
+        Determine which bricks in row i−1 overlap each brick in row i.
+        """
+        n_rows = len(self.rows)
+        for i in range(1, n_rows):
+            if self.bond_type == "flemish" and (i % 2 == 1):
+                x_offset_i = BRICK_FULL // 4
+            else:
+                x_offset_i = 0
+            if self.bond_type == "flemish" and ((i - 1) % 2 == 1):
+                x_offset_prev = BRICK_FULL // 4
+            else:
+                x_offset_prev = 0
+
+            for j, brick in enumerate(self.rows[i]):
+                left1 = self.positions_mm[i][j] + x_offset_i
+                right1 = left1 + brick.length
+                brick.parents = []
+                for k, below in enumerate(self.rows[i - 1]):
+                    left2 = self.positions_mm[i - 1][k] + x_offset_prev
+                    right2 = left2 + below.length
+                    if max(left1, left2) < min(right1, right2):
+                        brick.parents.append(below)
 
 
     def build_next(self) -> bool:
@@ -373,7 +441,7 @@ class Wall:
 
         i, j = self.brick_order[self.build_index]
         brick = self.rows[i][j]
-        is_english = self.bond_type == "english"
+        is_english = (self.bond_type == "english")
         is_stretcher = (i % 2 == 0)
 
         if not brick.built:

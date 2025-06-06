@@ -1,74 +1,75 @@
-# gui_wall_visualizer.py
-
 import pygame
 import sys
 from typing import List
 from main import Wall as LogicWall, WALL_WIDTH, WALL_HEIGHT, COURSE_HEIGHT, BUILD_WIDTH, BUILD_HEIGHT
 
-# Constants
 SCALE = 0.2
 BRICK_HEIGHT = 50
-HEAD_JOINT = 10
 BOTTOM_BAR_HEIGHT = 60
-BRICK_FULL = 210
+BRICK_FULL    = 210    # mm
 
-# Enhanced Screen
 MARGIN = 200
 SCREEN_WIDTH = int((WALL_WIDTH + MARGIN) * SCALE)
 SCREEN_HEIGHT = int((WALL_HEIGHT + MARGIN) * SCALE + BOTTOM_BAR_HEIGHT)
 
-# Colors
-BACKGROUND = (240, 240, 240)
+BACKGROUND       = (240, 240, 240)
 BOTTOM_BAR_COLOR = (220, 220, 220)
-GRID = (180, 180, 180)
-DESIGN_COLOR = (200, 200, 200)
-BUILT_COLOR = (80, 80, 80)
-STRIDE_COLORS = [
-    (255, 0, 0), (0, 128, 0), (0, 0, 255), (255, 165, 0),
-    (128, 0, 128), (0, 206, 209), (210, 105, 30), (189, 183, 107)
+GRID             = (180, 180, 180)
+DESIGN_COLOR     = (200, 200, 200)
+STRIDE_COLORS    = [
+    (255,   0,   0),
+    (0,   128,   0),
+    (0,     0, 255),
+    (255, 165,   0),
+    (128,   0, 128),
+    (0,   206, 209),
+    (210, 105,  30),
+    (189, 183, 107),
 ]
-ZONE_BORDER = (50, 50, 50)
-BUILD_AREA_BG = (210, 210, 210)
+BUILD_AREA_BG    = (210, 210, 210)
 
 pygame.init()
-screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
+screen       = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
 pygame.display.set_caption("Wall Visualizer")
-font = pygame.font.SysFont(None, 28)
-small_font = pygame.font.SysFont(None, 24)
-clock = pygame.time.Clock()
+font         = pygame.font.SysFont(None, 28)
+small_font   = pygame.font.SysFont(None, 24)
+clock        = pygame.time.Clock()
 
 
 class BrickVisual:
+    """
+    Draw helper: x,y in mm; w is width; stride picks color; ref = Brick instance.
+    """
     def __init__(self, x: float, y: float, w: float, stride: int, brick_ref):
-        self.x = x          # x_mm (after quarter‐brick offset and prior to clipping)
-        self.y = y          # y_mm (bottom of course)
-        self.w = w          # w_mm (clipped so that x+w ≤ WALL_WIDTH)
+        self.x      = x
+        self.y      = y
+        self.w      = w
         self.stride = stride
-        self.ref = brick_ref
+        self.ref    = brick_ref
 
     def draw(self, surface):
-        h = BRICK_HEIGHT
-        # Convert wall‐space (y from bottom) into Pygame (y from top)
-        y_px = WALL_HEIGHT - self.y - h
+        h_px = BRICK_HEIGHT
+        y_px = WALL_HEIGHT - self.y - h_px
         rect = pygame.Rect(
-            (self.x + MARGIN // 2) * SCALE,
-            (y_px + MARGIN // 2) * SCALE,
+            (self.x + (MARGIN // 2)) * SCALE,
+            (y_px + (MARGIN // 2)) * SCALE,
             self.w * SCALE,
-            h * SCALE
+            h_px * SCALE
         )
 
         if not self.ref.built:
             color = DESIGN_COLOR
         else:
-            stride_color = STRIDE_COLORS[self.stride % len(STRIDE_COLORS)]
+            base_color = STRIDE_COLORS[self.stride % len(STRIDE_COLORS)]
+            # pale out English full‐stretchers until they go back_to_back
             is_full_stretcher = (
-                self.ref.length == 210 and
-                not self.ref.is_half and
-                not self.ref.is_header
+                self.ref.length == BRICK_FULL
+                and not self.ref.is_half
+                and not self.ref.is_header
             )
-            is_english = (getattr(self.ref, "bond_type", "") == "english")
-            needs_pale = is_english and is_full_stretcher and not self.ref.back_to_back
-            color = tuple((c + 255) // 2 for c in stride_color) if needs_pale else stride_color
+            is_english = (self.ref.bond_type == "english")
+            needs_pale = is_english and is_full_stretcher and (not self.ref.back_to_back)
+            color = tuple((c + 255) // 2 for c in base_color) if needs_pale else base_color
 
         pygame.draw.rect(surface, color, rect)
         pygame.draw.rect(surface, GRID, rect, 1)
@@ -79,50 +80,21 @@ def convert_logic_wall_to_visual(wall: LogicWall) -> List[BrickVisual]:
 
     for i, row in enumerate(wall.rows):
         y_mm = i * COURSE_HEIGHT
-
-        # Compute the quarter-brick offset (only for Flemish/Wild)
-        if wall.bond_type == "flemish" and (i % 2 == 1):
-            x_offset = BRICK_FULL // 4
-        elif wall.bond_type == "wild":
-            x_offset = (BRICK_FULL // 4) * (i % 4)
-        else:
-            x_offset = 0
+        offset = BRICK_FULL // 4 if (wall.bond_type == "flemish" and (i % 2 == 1)) else 0
 
         for j, brick in enumerate(row):
             base_x = wall.positions_mm[i][j]
-            x_mm = base_x + x_offset
+            x_mm = base_x + offset
             w_mm = brick.length
 
-            # Clip so x_mm + w_mm never exceeds WALL_WIDTH
             if x_mm + w_mm > WALL_WIDTH:
                 w_mm = max(0, WALL_WIDTH - x_mm)
-
             if w_mm <= 0:
-                # The entire brick would be off‐screen—skip drawing
                 continue
 
             visuals.append(BrickVisual(x_mm, y_mm, w_mm, brick.stride, brick))
 
     return visuals
-
-
-def draw_zone_dividers(surface):
-    for x in range(BUILD_WIDTH, WALL_WIDTH, BUILD_WIDTH):
-        x_px = (x * SCALE) + ((MARGIN // 2) * SCALE)
-        pygame.draw.line(
-            surface, ZONE_BORDER,
-            (x_px, (MARGIN // 2) * SCALE),
-            (x_px, ((MARGIN // 2) + WALL_HEIGHT) * SCALE),
-            1
-        )
-    y_cut = WALL_HEIGHT - BUILD_HEIGHT + COURSE_HEIGHT
-    y_px = (y_cut + MARGIN // 2) * SCALE
-    pygame.draw.line(
-        surface, ZONE_BORDER,
-        ((MARGIN // 2) * SCALE, y_px),
-        (((MARGIN // 2) + WALL_WIDTH) * SCALE, y_px),
-        2
-    )
 
 
 def draw_bottom_bar(surface, wall: LogicWall, moves: int):
@@ -135,9 +107,11 @@ def draw_bottom_bar(surface, wall: LogicWall, moves: int):
         bond_text = f"Wall complete: {wall.build_index} bricks in {wall.bond_type.title()} bond"
     else:
         bond_text = f"Bond: {wall.bond_type.title()} | Built: {wall.build_index}/{len(wall.brick_order)}"
+
     ctrl_text = "Enter: Build next | Space: Change bond"
     move_text = f"Moves: {moves}"
-    surface.blit(font.render(bond_text, True, (0, 0, 0)), (10, SCREEN_WIDTH * 0 + SCREEN_HEIGHT - BOTTOM_BAR_HEIGHT + 8))
+
+    surface.blit(font.render(bond_text, True, (0, 0, 0)), (10, SCREEN_HEIGHT - BOTTOM_BAR_HEIGHT + 8))
     surface.blit(small_font.render(ctrl_text, True, (50, 50, 50)), (10, SCREEN_HEIGHT - BOTTOM_BAR_HEIGHT + 35))
     surface.blit(small_font.render(move_text, True, (50, 50, 50)), (SCREEN_WIDTH - 150, SCREEN_HEIGHT - BOTTOM_BAR_HEIGHT + 35))
 
@@ -196,13 +170,12 @@ def main():
     screen.blit(loading_surf, loading_rect)
     pygame.display.flip()
 
-    logic_wall = LogicWall(bond_type=bond)
+    logic_wall    = LogicWall(bond_type=bond)
     brick_visuals = convert_logic_wall_to_visual(logic_wall)
     moves = 0
 
     while True:
         screen.fill(BACKGROUND)
-
         wall_area_rect = pygame.Rect(
             (MARGIN // 2) * SCALE,
             (MARGIN // 2) * SCALE,
@@ -210,26 +183,23 @@ def main():
             (WALL_HEIGHT) * SCALE
         )
         pygame.draw.rect(screen, BUILD_AREA_BG, wall_area_rect)
-        draw_zone_dividers(screen)
 
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 pygame.quit()
                 sys.exit()
             elif event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_RETURN:
-                    if logic_wall.build_index < len(logic_wall.brick_order):
-                        prev_stride = -1
-                        if logic_wall.build_index > 0:
-                            pi, pj = logic_wall.brick_order[logic_wall.build_index - 1]
-                            prev_stride = logic_wall.rows[pi][pj].stride
+                if event.key == pygame.K_RETURN and logic_wall.build_index < len(logic_wall.brick_order):
+                    prev_stride = -1
+                    if logic_wall.build_index > 0:
+                        pi, pj = logic_wall.brick_order[logic_wall.build_index - 1]
+                        prev_stride = logic_wall.rows[pi][pj].stride
 
-                        i, j = logic_wall.brick_order[logic_wall.build_index]
-                        curr_brick = logic_wall.rows[i][j]
-                        if curr_brick.stride > prev_stride:
-                            moves += 1
-
-                        logic_wall.build_next()
+                    i, j = logic_wall.brick_order[logic_wall.build_index]
+                    curr_brick = logic_wall.rows[i][j]
+                    if curr_brick.stride > prev_stride:
+                        moves += 1
+                    logic_wall.build_next()
 
                 elif event.key == pygame.K_SPACE:
                     bond = bond_selection_screen()
