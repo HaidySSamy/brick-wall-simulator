@@ -6,7 +6,7 @@ from main import Wall as LogicWall, WALL_WIDTH, WALL_HEIGHT, COURSE_HEIGHT, BUIL
 SCALE = 0.2
 BRICK_HEIGHT = 50
 BOTTOM_BAR_HEIGHT = 60
-BRICK_FULL    = 210    # mm
+BRICK_FULL    = 210  
 
 MARGIN = 200
 SCREEN_WIDTH = int((WALL_WIDTH + MARGIN) * SCALE)
@@ -32,19 +32,42 @@ clock        = pygame.time.Clock()
 
 class BrickVisual:
     """
-    A helper to draw one brick rectangle on screen.
-    x, y in mm (0,0 at bottom‐left); w is width in mm; stride picks color; ref is Brick.
+    Represents one brick rectangle for drawing in Pygame.
+
+    Attributes:
+        x (float): X‐coordinate in mm (0 at left of wall).
+        y (float): Y‐coordinate in mm (0 at bottom of wall).
+        w (float): Width of the brick in mm.
+        stride (int): Color zone index for this brick.
+        ref: Reference to the Brick object (for built/headers info).
     """
+
     def __init__(self, x: float, y: float, w: float, stride: int, brick_ref):
+        """
+        Initialize a BrickVisual.
+
+        Args:
+            x (float): Left‐edge x‐position in mm.
+            y (float): Bottom‐edge y‐position in mm.
+            w (float): Width of this brick in mm.
+            stride (int): Assigned stride (color zone).
+            brick_ref: Reference to the Brick instance (to check built/headers).
+        """
         self.x      = x
         self.y      = y
         self.w      = w
         self.stride = stride
         self.ref    = brick_ref
 
-    def draw(self, surface):
+    def draw(self, surface) -> None:
+        """
+        Draw this brick onto the given Pygame surface.
+
+        Args:
+            surface: Pygame surface where the brick should be drawn.
+        """
         h_px = BRICK_HEIGHT
-        # convert to pygame coords (0,0 top-left; y grows downward)
+        # Convert wall‐coordinates (0,0 bottom‐left) to Pygame (0,0 top‐left)
         y_px = WALL_HEIGHT - self.y - h_px
 
         rect = pygame.Rect(
@@ -72,6 +95,17 @@ class BrickVisual:
 
 
 def convert_logic_wall_to_visual(wall: LogicWall) -> List[BrickVisual]:
+    """
+    Convert a LogicWall's bricks into a list of BrickVisuals for drawing.
+
+    Applies any Flemish ¼‐brick offset on odd rows.
+
+    Args:
+        wall (LogicWall): The logic representation of the wall.
+
+    Returns:
+        List[BrickVisual]: Visual objects for each brick in the current wall.
+    """
     visuals: List[BrickVisual] = []
 
     for i, row in enumerate(wall.rows):
@@ -83,6 +117,7 @@ def convert_logic_wall_to_visual(wall: LogicWall) -> List[BrickVisual]:
             x_mm = base_x + offset
             w_mm = brick.length
 
+            # Clip if overshoots
             if x_mm + w_mm > WALL_WIDTH:
                 w_mm = max(0, WALL_WIDTH - x_mm)
             if w_mm <= 0:
@@ -93,7 +128,15 @@ def convert_logic_wall_to_visual(wall: LogicWall) -> List[BrickVisual]:
     return visuals
 
 
-def draw_bottom_bar(surface, wall: LogicWall, moves: int):
+def draw_bottom_bar(surface, wall: LogicWall, moves: int) -> None:
+    """
+    Draw the status bar at the bottom showing bond type, build count, controls, and moves.
+
+    Args:
+        surface: Pygame surface to draw on.
+        wall (LogicWall): The current wall logic (to read build_index, bond_type).
+        moves (int): Number of times the robot moved (for move count display).
+    """
     pygame.draw.rect(
         surface,
         BOTTOM_BAR_COLOR,
@@ -112,7 +155,13 @@ def draw_bottom_bar(surface, wall: LogicWall, moves: int):
     surface.blit(small_font.render(move_text, True, (50, 50, 50)), (SCREEN_WIDTH - 150, SCREEN_HEIGHT - BOTTOM_BAR_HEIGHT + 35))
 
 
-def bond_selection_screen():
+def bond_selection_screen() -> str:
+    """
+    Display a simple menu to allow the user to pick a bond type.
+
+    Returns:
+        str: The chosen bond type ("stretcher", "flemish", "english", or "wild").
+    """
     bonds = ["stretcher", "flemish", "english", "wild"]
     buttons = []
     margin = 20
@@ -156,7 +205,15 @@ def bond_selection_screen():
         clock.tick(30)
 
 
-def main():
+def main() -> None:
+    """
+    Main loop: ask user for bond type, generate wall, and enter Pygame loop to draw/build.
+
+    Controls:
+        - Enter: Build next brick
+        - Space: Return to bond selection and regenerate
+        - Close window: Exit
+    """
     bond = bond_selection_screen()
 
     screen.fill(BACKGROUND)
