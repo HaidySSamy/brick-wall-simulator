@@ -17,14 +17,8 @@ BOTTOM_BAR_COLOR = (220, 220, 220)
 GRID             = (180, 180, 180)
 DESIGN_COLOR     = (200, 200, 200)
 STRIDE_COLORS    = [
-    (255,   0,   0),
-    (0,   128,   0),
-    (0,     0, 255),
-    (255, 165,   0),
-    (128,   0, 128),
-    (0,   206, 209),
-    (210, 105,  30),
-    (189, 183, 107),
+    (255,   0,   0), (0,   128,   0), (0,     0, 255), (255, 165,   0),
+    (128,   0, 128), (0,   206, 209), (210, 105,  30), (189, 183, 107),
 ]
 BUILD_AREA_BG    = (210, 210, 210)
 
@@ -38,7 +32,8 @@ clock        = pygame.time.Clock()
 
 class BrickVisual:
     """
-    Draw helper: x,y in mm; w is width; stride picks color; ref = Brick instance.
+    A helper to draw one brick rectangle on screen.
+    x, y in mm (0,0 at bottom‐left); w is width in mm; stride picks color; ref is Brick.
     """
     def __init__(self, x: float, y: float, w: float, stride: int, brick_ref):
         self.x      = x
@@ -49,7 +44,9 @@ class BrickVisual:
 
     def draw(self, surface):
         h_px = BRICK_HEIGHT
+        # convert to pygame coords (0,0 top-left; y grows downward)
         y_px = WALL_HEIGHT - self.y - h_px
+
         rect = pygame.Rect(
             (self.x + (MARGIN // 2)) * SCALE,
             (y_px + (MARGIN // 2)) * SCALE,
@@ -61,7 +58,6 @@ class BrickVisual:
             color = DESIGN_COLOR
         else:
             base_color = STRIDE_COLORS[self.stride % len(STRIDE_COLORS)]
-            # pale out English full‐stretchers until they go back_to_back
             is_full_stretcher = (
                 self.ref.length == BRICK_FULL
                 and not self.ref.is_half
@@ -188,6 +184,7 @@ def main():
             if event.type == pygame.QUIT:
                 pygame.quit()
                 sys.exit()
+
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_RETURN and logic_wall.build_index < len(logic_wall.brick_order):
                     prev_stride = -1
